@@ -96,7 +96,7 @@ export default function Dashboard({data}){
 
       {/* KPIs — 6 cards with GS/Other split */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:12,marginBottom:24}}>
-        <Kpi label="Total Revenue" value={fmt(totals.revenue)} sub={isOv?`${validMonths.length} months`:`${daily.length} days`} color={C.accent} icon="₹"/>
+        <Kpi label="Total Revenue (GS + Other)" value={fmt(totals.revenue)} sub={`GS: ${fmt(totals.gsRevenue)} + Other: ${fmt(totals.otherRevenue)}`} color={C.accent} icon="₹"/>
         <Kpi label="GS Admission Revenue" value={fmt(totals.gsRevenue)} sub={`${totals.revenue>0?((totals.gsRevenue/totals.revenue)*100).toFixed(1):0}% of total`} color={C.green} icon="G"/>
         <Kpi label="Other Admission Revenue" value={fmt(totals.otherRevenue)} sub={`${totals.revenue>0?((totals.otherRevenue/totals.revenue)*100).toFixed(1):0}% of total`} color={C.purple} icon="O"/>
         <Kpi label="Admissions" value={`${totals.admissions}`} sub={`GS: ${totals.gsAdmissions} • Other: ${totals.otherAdmissions}`} color={C.amber} icon="▲"/>
