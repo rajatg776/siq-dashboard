@@ -12,6 +12,8 @@ const SoL={Inbound:"Inbound",Paid:"Paid Campaign",Website:"Website",External:"Ex
 const fmt=n=>{if(n>=1e7)return`₹${(n/1e7).toFixed(2)} Cr`;if(n>=1e5)return`₹${(n/1e5).toFixed(2)} L`;if(n>=1e3)return`₹${(n/1e3).toFixed(1)}K`;return`₹${n}`;};
 const fS=n=>{if(n>=1e7)return`${(n/1e7).toFixed(1)}Cr`;if(n>=1e5)return`${(n/1e5).toFixed(1)}L`;if(n>=1e3)return`${(n/1e3).toFixed(0)}K`;return n;};
 const sD=d=>{if(!d)return"";const p=d.split("-");const m=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return`${m[parseInt(p[1])]} ${parseInt(p[2])}`;};
+const gDim=l=>{if(l==="Overall")return 30;const p=l.split(" ");return isNaN(Date.parse(`1 ${p[0]} 2000`))?30:new Date(p[1],new Date(`${p[0]} 1`).getMonth()+1,0).getDate();};
+
 
 const Tp=({active,payload,label})=>{if(!active||!payload?.length)return null;return(<div style={{background:"#1e293b",border:"1px solid #334155",borderRadius:8,padding:"10px 14px",fontSize:12,zIndex:999}}><p style={{color:"#e2e8f0",fontWeight:600,marginBottom:6}}>{label}</p>{payload.map((p,i)=>(<p key={i} style={{color:p.color,margin:"2px 0"}}>{p.name}: {typeof p.value==="number"&&p.value>1000?fmt(p.value):p.value}</p>))}</div>);};
 const Kpi=({label,value,sub,color,icon})=>(<div style={{background:`linear-gradient(135deg,${C.card} 0%,${color}08 100%)`,border:`1px solid ${color}30`,borderRadius:16,padding:"20px 22px",position:"relative",overflow:"hidden"}}><div style={{position:"absolute",top:-10,right:-10,fontSize:56,opacity:0.06,color}}>{icon}</div><p style={{color:C.textDim,fontSize:11,fontWeight:500,letterSpacing:1.2,textTransform:"uppercase",margin:0}}>{label}</p><p style={{color,fontSize:26,fontWeight:700,margin:"5px 0 3px",fontFamily:"'JetBrains Mono',monospace"}}>{value}</p>{sub&&<p style={{color:C.textDim,fontSize:11,margin:0}}>{sub}</p>}</div>);
@@ -70,7 +72,35 @@ export default function Dashboard({data}){
   const best=convC.reduce((a,b)=>a.convRate>b.convRate?a:b,{name:"-",convRate:0});
   const worst=convC.reduce((a,b)=>a.convRate<b.convRate?a:b,{name:"-",convRate:100});
 
-  const tabs=[{id:"revenue",label:"Revenue Trends",c:C.accent},{id:"centres",label:"Centre Breakdown",c:C.accent},{id:"walkins",label:"Walk-in Funnel",c:C.accent},{id:"leads",label:"Lead Funnel",c:C.green}];
+  // --- FORECAST LOGIC ---
+  const dim = gDim(cur.label);
+  const elapsed = isOv ? validMonths.length * 30 : (daily.length || 1);
+  const rr = totals.revenue / elapsed;
+  const projRev = isOv ? totals.revenue : rr * dim; // only project for single month
+  const cPipe = cNames.map(cn => {
+    const d = leadFunnelData?.[cn]||{};
+    const s = d.stages||{};
+    const hc = (s.FP||0) + (s.Interested||0) + (s.Warm||0);
+    const he = hc + (d.enrolled||0);
+    const cp = he > 0 ? (d.enrolled||0)/he : 0.2; // Derived historical win rate from data
+    const cR = centreRevenue.find(x=>x.name.toLowerCase()===cn.toLowerCase()) || {value:0,adm:0};
+    const cAvg = cR.adm > 0 ? cR.value / cR.adm : avgT;
+    return { name: cn, pipeVal: hc * cp * cAvg, qs: d.leads>0 ? (he/d.leads)*100 : 0, hc, cp, cAvg };
+  }).sort((a,b)=>b.pipeVal-a.pipeVal);
+  
+  const oPipeList = sel==="Overall" ? {hc:(cf.stages?.FP||0)+(cf.stages?.Interested||0)+(cf.stages?.Warm||0), enrolled:cf.enrolled||0, leads:cf.leads||0} : cPipe.find(c=>c.name===sel)||{hc:0,enrolled:0,leads:0,pipeVal:0};
+  const oHE = oPipeList.hc + oPipeList.enrolled;
+  const oCp = oHE > 0 ? oPipeList.enrolled/oHE : 0.2;
+  const selPipeVal = sel==="Overall" ? oPipeList.hc * oCp * avgT : oPipeList.pipeVal;
+  const selQs = oPipeList.leads > 0 ? (oHE / oPipeList.leads)*100 : 0;
+  // Chart data for run rate
+  const runRateData = daily.map((d,i) => {
+    const ideal = rr * (i+1);
+    return { date: d.date, actual: d.cumRev, projected: ideal };
+  });
+
+  const tabs=[{id:"revenue",label:"Revenue Trends",c:C.accent},{id:"centres",label:"Centre Breakdown",c:C.accent},{id:"walkins",label:"Walk-in Funnel",c:C.accent},{id:"leads",label:"Lead Funnel",c:C.green},{id:"forecast",label:"Sales & Forecast",c:C.rose}];
+
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'DM Sans','Segoe UI',sans-serif",padding:"24px 20px"}}>
@@ -241,6 +271,103 @@ export default function Dashboard({data}){
 
         <Cd><Tt>Centre Comparison</Tt><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,fontSize:12}}><thead><tr>{["Centre","Walk-ins","Leads","Cold","Warm","Interested","FP","Enrolled","Conv %","Hot"].map(h=><th key={h} style={{padding:"10px 12px",textAlign:"left",color:C.textDim,fontWeight:600,fontSize:11,textTransform:"uppercase",borderBottom:`1px solid ${C.cardBorder}`,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead><tbody>{cNames.map((cn,i)=>{const d=leadFunnelData?.[cn]||{};const st=d.stages||{};const hot=(d.enrolled||0)+(st.Interested||0)+(st.FP||0);return(<tr key={cn} style={{background:i%2===0?"transparent":C.cardBorder+"30"}}><td style={{padding:"10px 12px",fontWeight:600,color:PC[i]}}>{cn}</td><td style={{padding:"10px 12px",fontFamily:"'JetBrains Mono',monospace"}}>{d.walkins||0}</td><td style={{padding:"10px 12px",fontFamily:"'JetBrains Mono',monospace"}}>{(d.leads||0).toLocaleString()}</td><td style={{padding:"10px 12px",color:C.textDim}}>{st.Cold||0}</td><td style={{padding:"10px 12px",color:C.amber}}>{st.Warm||0}</td><td style={{padding:"10px 12px",color:C.sky}}>{st.Interested||0}</td><td style={{padding:"10px 12px",color:C.accent}}>{st.FP||0}</td><td style={{padding:"10px 12px",color:C.green,fontWeight:700}}>{d.enrolled||0}</td><td style={{padding:"10px 12px"}}><span style={{padding:"3px 8px",borderRadius:12,fontSize:11,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",background:(d.convRate||0)>=10?C.green+"20":(d.convRate||0)>=5?C.amber+"20":C.rose+"20",color:(d.convRate||0)>=10?C.green:(d.convRate||0)>=5?C.amber:C.rose}}>{d.convRate||0}%</span></td><td style={{padding:"10px 12px",fontWeight:600,color:C.amber}}>{hot}</td></tr>);})}</tbody></table></div></Cd>
       </div>)}
+
+      {/* ═══ FORECAST & SALES TAB ═══ */}
+      {tab==="forecast"&&(<div style={{display:"grid",gap:18}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{["Overall",...cNames].map(cn=>(<button key={cn} onClick={()=>setSel(cn)} style={{padding:"7px 18px",borderRadius:8,border:`1px solid ${sel===cn?C.rose:C.cardBorder}`,cursor:"pointer",fontSize:13,fontWeight:600,fontFamily:"inherit",background:sel===cn?C.rose+"20":C.card,color:sel===cn?C.rose:C.textDim}}>{cn}</button>))}</div>
+        
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>
+          <Kpi label={isOv?"Overall Revenue":"Projected Revenue"} value={fmt(projRev)} sub={isOv?"Not extrapolated for year":"Extrapolated to month end based on run rate"} color={C.rose} icon="~"/>
+          <Kpi label="Est. Pipeline Value" value={fmt(selPipeVal)} sub={`From ${oPipeList.hc} warm/hot leads (${(oCp*100).toFixed(0)}% win rate)`} color={C.amber} icon="★"/>
+          <Kpi label="Lead Quality Score" value={selQs.toFixed(1)} sub="Ratio of hot/enrolled vs total leads" color={selQs>=15?C.green:selQs>=8?C.amber:C.rose} icon="Q"/>
+          {!isOv && <Kpi label="Daily Run Rate" value={fmt(rr)} sub={`Avg revenue per day over ${elapsed} days`} color={C.sky} icon="»"/>}
+        </div>
+
+        {!isOv && (
+          <Cd><Tt>Revenue Projection Tracker (Run Rate vs Actual)</Tt>
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={runRateData}>
+                <defs>
+                  <linearGradient id="projGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.rose} stopOpacity={0.4}/><stop offset="95%" stopColor={C.rose} stopOpacity={0}/></linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.gridLine} vertical={false}/>
+                <XAxis dataKey="date" tick={{fill:C.textDim,fontSize:10}} tickLine={false} axisLine={false} interval={Math.max(Math.floor(runRateData.length/15),1)}/>
+                <YAxis tick={{fill:C.textDim,fontSize:10}} tickFormatter={fS} tickLine={false} axisLine={false}/>
+                <Tooltip content={<Tp/>}/>
+                <Legend wrapperStyle={{fontSize:11}}/>
+                <Area type="monotone" dataKey="projected" name="Projected Trajectory" stroke={C.rose} fill="url(#projGrad)" strokeWidth={2.5} strokeDasharray="5 5" dot={false}/>
+                <Area type="monotone" dataKey="actual" name="Actual Cumulative" stroke={C.accent} fill="transparent" strokeWidth={3} dot={{r:3,fill:C.accent}}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </Cd>
+        )}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18}}>
+          <Cd><Tt>Pipeline Value Breakdown (by Centre)</Tt>
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={cPipe} layout="vertical" barCategoryGap="25%">
+                <CartesianGrid strokeDasharray="3 3" stroke={C.gridLine} horizontal={false}/>
+                <XAxis type="number" tick={{fill:C.textDim,fontSize:10}} tickFormatter={fS} tickLine={false} axisLine={false}/>
+                <YAxis dataKey="name" type="category" tick={{fill:C.text,fontSize:11}} tickLine={false} axisLine={false} width={80}/>
+                <Tooltip formatter={v=>fmt(v)} cursor={{fill:C.cardBorder}}/>
+                <Bar dataKey="pipeVal" name="Est. Pipeline (₹)" fill={C.amber} radius={[0,6,6,0]}>
+                  {cPipe.map((entry, index) => <Cell key={`cell-${index}`} fill={PC[index % PC.length]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </Cd>
+
+          <Cd><Tt>Lead Quality Score Breakdown</Tt>
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={cPipe.sort((a,b)=>b.qs-a.qs)} layout="vertical" barCategoryGap="25%">
+                <CartesianGrid strokeDasharray="3 3" stroke={C.gridLine} horizontal={false}/>
+                <XAxis type="number" tick={{fill:C.textDim,fontSize:10}} unit=" Qs" tickLine={false} axisLine={false}/>
+                <YAxis dataKey="name" type="category" tick={{fill:C.text,fontSize:11}} tickLine={false} axisLine={false} width={80}/>
+                <Tooltip formatter={v=>v.toFixed(1)} cursor={{fill:C.cardBorder}}/>
+                <Bar dataKey="qs" name="Quality Score" radius={[0,6,6,0]}>
+                  {cPipe.map((entry, index) => <Cell key={`qs-${index}`} fill={entry.qs>=15?C.green:entry.qs>=8?C.amber:C.rose} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </Cd>
+        </div>
+
+        <Cd><Tt sub={sel}>Sales Funnel Progression</Tt>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,fontSize:12}}>
+              <thead>
+                <tr>
+                  {["Stage","Count","Est. Target Audience %","Survival %"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left",color:C.textDim,fontWeight:600,fontSize:11,textTransform:"uppercase",borderBottom:`1px solid ${C.cardBorder}`,whiteSpace:"nowrap"}}>{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  {stg:"Walk-ins",val:cf.walkins||0, c:C.sky},
+                  {stg:"Cold",val:cf.stages?.Cold||0, c:C.textDim},
+                  {stg:"Warm",val:cf.stages?.Warm||0, c:C.amber},
+                  {stg:"Interested",val:cf.stages?.Interested||0, c:C.rose},
+                  {stg:"Future Prospect",val:cf.stages?.FP||0, c:C.purple},
+                  {stg:"Enrolled",val:cf.enrolled||0, c:C.green}
+                ].map((row,i,arr)=>{
+                  const totL = cf.leads||1;
+                  const tgtPct = ((row.val/totL)*100).toFixed(1);
+                  const srv = row.val > 0 && cf.walkins > 0 ? ((row.val/cf.walkins)*100).toFixed(1) : 0;
+                  return (
+                    <tr key={row.stg} style={{background:i%2===0?"transparent":C.cardBorder+"30"}}>
+                      <td style={{padding:"10px 14px",fontWeight:600,color:row.c}}>{row.stg}</td>
+                      <td style={{padding:"10px 14px",fontFamily:"'JetBrains Mono',monospace",fontWeight:700}}>{row.val}</td>
+                      <td style={{padding:"10px 14px",color:C.textDim}}>{tgtPct}% of Leads</td>
+                      <td style={{padding:"10px 14px"}}><span style={{padding:"3px 8px",borderRadius:12,fontSize:11,fontWeight:700,fontFamily:"'JetBrains Mono',monospace",background:row.c+"20",color:row.c}}>{srv}% from Walkins</span></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Cd>
+
+      </div>)}
+
 
       <div style={{marginTop:28,textAlign:"center",color:C.textDim,fontSize:11,opacity:0.6}}>StudyIQ Offline Centres • Multi-Month Dashboard • GS + Other Revenue</div>
     </div>
